@@ -1,4 +1,6 @@
 /target/
 /.arti-data/
+vendor/**/target/
+vendor/**/Cargo.lock
 *.pdb
 *.exe

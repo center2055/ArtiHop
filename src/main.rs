@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     let config = AppConfig::load(cli)?;
 
     init_tracing(&config.log_filter)?;
-    pathing::ensure_supported(config.mode)?;
+    pathing::configure(config.mode);
 
     info!(mode = %config.mode, socks = %config.socks, "starting ArtiHop");
 

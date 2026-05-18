@@ -60,9 +60,9 @@ pub async fn run_socks5(listen_addr: SocketAddr, tor_client: ArtiClient) -> Resu
         tokio::spawn(async move {
             if let Err(error) = handle_client(stream, tor_client).await {
                 if is_routine_disconnect(&error) {
-                    debug!(%peer_addr, error = %error, "SOCKS connection closed");
+                    debug!(%peer_addr, error = ?error, "SOCKS connection closed");
                 } else {
-                    warn!(%peer_addr, error = %error, "SOCKS connection closed with error");
+                    warn!(%peer_addr, error = ?error, "SOCKS connection closed with error");
                 }
             }
         });

@@ -1,17 +1,22 @@
-use anyhow::{Result, bail};
-
 use crate::config::Mode;
+use tor_circmgr::experimental_path::{ExperimentalPathMode, set_experimental_path_mode};
+use tracing::warn;
 
-pub fn ensure_supported(mode: Mode) -> Result<()> {
-    if !mode.is_experimental() {
-        return Ok(());
+pub fn configure(mode: Mode) {
+    let arti_mode = match mode {
+        Mode::Normal => ExperimentalPathMode::Standard,
+        Mode::Short2 => ExperimentalPathMode::Short2,
+        Mode::Short1 => ExperimentalPathMode::Short1,
+    };
+
+    set_experimental_path_mode(arti_mode);
+
+    if mode.is_experimental() {
+        warn!(
+            %mode,
+            "experimental shortened Tor circuit mode enabled; anonymity is reduced"
+        );
     }
-
-    bail!(
-        "{mode} is intentionally not implemented in the compileable MVP. \
-         Arti's stable TorClient API does not expose a supported hook for forcing \
-         one-hop or two-hop exit circuits."
-    )
 }
 
 #[allow(dead_code)]

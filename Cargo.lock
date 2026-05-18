@@ -208,6 +208,7 @@ dependencies = [
  "serde",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "tor-circmgr",
  "tor-rtcompat",
  "tor-socksproto",
  "tracing",
@@ -3862,8 +3863,6 @@ dependencies = [
 [[package]]
 name = "tor-circmgr"
 version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2402d71b92ff5221497713f7fdb124bd3861213382f7dee5cd93dd4c98ef5abf"
 dependencies = [
  "amplify",
  "async-trait",

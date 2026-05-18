@@ -2,18 +2,20 @@
 
 ArtiHop is a standalone Rust microservice that exposes a local SOCKS5 proxy and routes traffic through the Tor network using Arti.
 
-The working target is deliberately conservative: normal Tor behavior through `arti-client`. Shortened-circuit modes are present as CLI/config options for research planning, but they fail closed because the stable `arti-client` API does not provide a supported way to force one-hop or two-hop exit circuits.
+Normal mode uses upstream `arti-client` behavior. The shortened modes are an explicit local fork experiment implemented through a vendored `tor-circmgr` patch, because stable `arti-client` does not expose a supported path-length injection API.
 
 ## Status
 
 - Normal mode: implemented and live-tested through Tor.
-- `short-2`: planned experiment, not active in the MVP.
-- `short-1`: planned diagnostic mode, not active in the MVP.
+- `short-2`: implemented as Guard -> Exit through the vendored circuit-manager patch; live SOCKS smoke test succeeds.
+- `short-1`: implemented as a single selected exit relay at the path-construction layer, but public Tor relays reject data streams on this shape with `END TORPROTOCOL`. Treat it as a diagnostic/private-network experiment, not a reliable public SOCKS mode.
 
 ## Usage
 
 ```powershell
 cargo run -- --mode normal --socks 127.0.0.1:9050
+cargo run -- --mode short-2 --socks 127.0.0.1:9050
+cargo run -- --mode short-1 --socks 127.0.0.1:9050
 ```
 
 With a config file:
@@ -41,8 +43,9 @@ Project layout:
 - `src/config.rs`: CLI and TOML config.
 - `src/tor_client.rs`: Arti bootstrap.
 - `src/proxy.rs`: SOCKS listener and bidirectional relay, using `tor-socksproto`.
-- `src/pathing.rs`: shortened-circuit mode boundary.
+- `src/pathing.rs`: startup switch for normal and experimental circuit modes.
 - `src/main.rs`: runtime, logging, shutdown.
+- `vendor/tor-circmgr`: local Arti circuit-manager patch used by the shortened modes.
 
 ## Verification
 
@@ -68,7 +71,9 @@ The expected response includes `"IsTor":true`.
 
 `normal` uses Arti's standard circuit selection through `TorClient::connect`.
 
-`short-2` and `short-1` are intentionally blocked in this version. A real implementation needs lower-level Arti circuit-management work and may require `experimental-api` or an Arti fork. See `docs/API_AUDIT.md` for the current feasibility notes.
+`short-2` uses the same SOCKS and `TorClient::connect` surface, but the patched `tor-circmgr` selects only Guard -> Exit for exit circuits.
+
+`short-1` selects a single exit relay and bypasses guard accounting for that circuit. In live public-network testing, relays consistently rejected the stream with `END TORPROTOCOL`; that is expected Tor relay behavior for single-hop exit streams. This mode is kept for diagnostics and private/forked relay experiments.
 
 ## Security
 
