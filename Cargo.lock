@@ -204,10 +204,12 @@ dependencies = [
  "anyhow",
  "arti-client",
  "clap",
+ "rustls",
  "serde",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tor-rtcompat",
+ "tor-socksproto",
  "tracing",
  "tracing-subscriber",
 ]
@@ -2886,6 +2888,7 @@ checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "log",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki",
  "subtle",

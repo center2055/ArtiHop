@@ -1,26 +1,17 @@
-use std::{fmt, net::SocketAddr};
+use std::{fmt, io::ErrorKind, net::SocketAddr};
 
 use anyhow::{Context, Result, bail};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+};
+use tor_socksproto::{
+    Buffer, Handshake, NextStep, PreciseReads, SocksAddr, SocksCmd, SocksProxyHandshake,
+    SocksRequest, SocksStatus,
 };
 use tracing::{debug, info, warn};
 
 use crate::tor_client::ArtiClient;
-
-const SOCKS_VERSION_5: u8 = 0x05;
-const SOCKS_AUTH_NONE: u8 = 0x00;
-const SOCKS_AUTH_NO_ACCEPTABLE: u8 = 0xff;
-const SOCKS_CMD_CONNECT: u8 = 0x01;
-const SOCKS_ATYP_IPV4: u8 = 0x01;
-const SOCKS_ATYP_DOMAIN: u8 = 0x03;
-const SOCKS_ATYP_IPV6: u8 = 0x04;
-
-const STATUS_SUCCEEDED: u8 = 0x00;
-const STATUS_GENERAL_FAILURE: u8 = 0x01;
-const STATUS_COMMAND_NOT_SUPPORTED: u8 = 0x07;
-const STATUS_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
 
 #[derive(Debug, Clone)]
 struct Target {
@@ -31,6 +22,26 @@ struct Target {
 impl fmt::Display for Target {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.host, self.port)
+    }
+}
+
+impl TryFrom<&SocksRequest> for Target {
+    type Error = anyhow::Error;
+
+    fn try_from(request: &SocksRequest) -> Result<Self> {
+        if request.command() != SocksCmd::CONNECT {
+            bail!("only SOCKS CONNECT is supported");
+        }
+
+        let host = match request.addr() {
+            SocksAddr::Hostname(hostname) => hostname.as_ref().to_owned(),
+            SocksAddr::Ip(ip) => ip.to_string(),
+        };
+
+        Ok(Self {
+            host,
+            port: request.port(),
+        })
     }
 }
 
@@ -48,15 +59,25 @@ pub async fn run_socks5(listen_addr: SocketAddr, tor_client: ArtiClient) -> Resu
 
         tokio::spawn(async move {
             if let Err(error) = handle_client(stream, tor_client).await {
-                warn!(%peer_addr, error = %error, "SOCKS connection closed with error");
+                if is_routine_disconnect(&error) {
+                    debug!(%peer_addr, error = %error, "SOCKS connection closed");
+                } else {
+                    warn!(%peer_addr, error = %error, "SOCKS connection closed with error");
+                }
             }
         });
     }
 }
 
 async fn handle_client(mut inbound: TcpStream, tor_client: ArtiClient) -> Result<()> {
-    negotiate_auth(&mut inbound).await?;
-    let target = read_connect_request(&mut inbound).await?;
+    let request = read_socks_request(&mut inbound).await?;
+    let target = match Target::try_from(&request) {
+        Ok(target) => target,
+        Err(error) => {
+            write_socks_reply(&mut inbound, &request, SocksStatus::COMMAND_NOT_SUPPORTED).await?;
+            return Err(error);
+        }
+    };
 
     debug!(%target, "opening Tor stream");
 
@@ -66,117 +87,199 @@ async fn handle_client(mut inbound: TcpStream, tor_client: ArtiClient) -> Result
     {
         Ok(stream) => stream,
         Err(error) => {
-            write_reply(&mut inbound, STATUS_GENERAL_FAILURE).await?;
+            write_socks_reply(&mut inbound, &request, SocksStatus::GENERAL_FAILURE).await?;
             return Err(error).context("failed to open Tor stream");
         }
     };
 
-    write_reply(&mut inbound, STATUS_SUCCEEDED).await?;
+    write_socks_reply(&mut inbound, &request, SocksStatus::SUCCEEDED).await?;
 
-    let (from_client, from_tor) = tokio::io::copy_bidirectional(&mut inbound, &mut tor_stream)
-        .await
-        .context("failed while relaying proxied stream")?;
+    match tokio::io::copy_bidirectional(&mut inbound, &mut tor_stream).await {
+        Ok((from_client, from_tor)) => {
+            debug!(%target, from_client, from_tor, "SOCKS stream finished");
+        }
+        Err(error) => {
+            debug!(%target, error = %error, kind = ?error.kind(), "SOCKS stream ended during relay");
+        }
+    }
 
-    debug!(%target, from_client, from_tor, "SOCKS stream finished");
     Ok(())
 }
 
-async fn negotiate_auth(stream: &mut TcpStream) -> Result<()> {
-    let mut header = [0_u8; 2];
-    stream.read_exact(&mut header).await?;
+fn is_routine_disconnect(error: &anyhow::Error) -> bool {
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<std::io::Error>()
+            && matches!(
+                error.kind(),
+                ErrorKind::UnexpectedEof
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::BrokenPipe
+            )
+        {
+            return true;
+        }
 
-    if header[0] != SOCKS_VERSION_5 {
-        bail!("client did not start a SOCKS5 handshake");
+        if matches!(
+            cause.downcast_ref::<tor_socksproto::Error>(),
+            Some(tor_socksproto::Error::UnexpectedEof)
+        ) {
+            return true;
+        }
     }
 
-    let method_count = header[1] as usize;
-    if method_count == 0 {
-        bail!("client offered no SOCKS authentication methods");
-    }
+    false
+}
 
-    let mut methods = vec![0_u8; method_count];
-    stream.read_exact(&mut methods).await?;
+async fn read_socks_request<S>(stream: &mut S) -> Result<SocksRequest>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut handshake = SocksProxyHandshake::new();
+    let mut buffer = Buffer::<PreciseReads>::new_precise();
 
-    if methods.contains(&SOCKS_AUTH_NONE) {
-        stream
-            .write_all(&[SOCKS_VERSION_5, SOCKS_AUTH_NONE])
-            .await?;
-        Ok(())
-    } else {
-        stream
-            .write_all(&[SOCKS_VERSION_5, SOCKS_AUTH_NO_ACCEPTABLE])
-            .await?;
-        bail!("client did not offer no-auth SOCKS5");
+    loop {
+        match handshake
+            .step(&mut buffer)
+            .context("SOCKS handshake failed")?
+        {
+            NextStep::Send(reply) => {
+                stream.write_all(&reply).await?;
+                stream.flush().await?;
+            }
+            NextStep::Recv(mut recv) => {
+                let read = stream.read(recv.buf()).await?;
+                recv.note_received(read)?;
+            }
+            NextStep::Finished(finished) => {
+                return finished
+                    .into_output()
+                    .context("SOCKS parser finished with unread handshake bytes");
+            }
+        }
     }
 }
 
-async fn read_connect_request(stream: &mut TcpStream) -> Result<Target> {
-    let mut header = [0_u8; 4];
-    stream.read_exact(&mut header).await?;
-
-    if header[0] != SOCKS_VERSION_5 {
-        write_reply(stream, STATUS_GENERAL_FAILURE).await?;
-        bail!("client sent a non-SOCKS5 request");
-    }
-
-    if header[1] != SOCKS_CMD_CONNECT {
-        write_reply(stream, STATUS_COMMAND_NOT_SUPPORTED).await?;
-        bail!("only SOCKS5 CONNECT is supported");
-    }
-
-    if header[2] != 0 {
-        write_reply(stream, STATUS_GENERAL_FAILURE).await?;
-        bail!("SOCKS5 reserved byte was not zero");
-    }
-
-    let host = match header[3] {
-        SOCKS_ATYP_IPV4 => {
-            let mut octets = [0_u8; 4];
-            stream.read_exact(&mut octets).await?;
-            std::net::Ipv4Addr::from(octets).to_string()
-        }
-        SOCKS_ATYP_DOMAIN => {
-            let mut len = [0_u8; 1];
-            stream.read_exact(&mut len).await?;
-            let mut bytes = vec![0_u8; len[0] as usize];
-            stream.read_exact(&mut bytes).await?;
-            String::from_utf8(bytes).context("SOCKS hostname was not valid UTF-8")?
-        }
-        SOCKS_ATYP_IPV6 => {
-            let mut octets = [0_u8; 16];
-            stream.read_exact(&mut octets).await?;
-            std::net::Ipv6Addr::from(octets).to_string()
-        }
-        _ => {
-            write_reply(stream, STATUS_ADDRESS_TYPE_NOT_SUPPORTED).await?;
-            bail!("unsupported SOCKS5 address type");
-        }
-    };
-
-    let mut port = [0_u8; 2];
-    stream.read_exact(&mut port).await?;
-
-    Ok(Target {
-        host,
-        port: u16::from_be_bytes(port),
-    })
-}
-
-async fn write_reply(stream: &mut TcpStream, status: u8) -> Result<()> {
-    stream
-        .write_all(&[
-            SOCKS_VERSION_5,
-            status,
-            0x00,
-            SOCKS_ATYP_IPV4,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ])
-        .await?;
+async fn write_socks_reply<S>(
+    stream: &mut S,
+    request: &SocksRequest,
+    status: SocksStatus,
+) -> Result<()>
+where
+    S: AsyncWrite + Unpin,
+{
+    let reply = request.reply(status, None)?;
+    stream.write_all(&reply).await?;
     stream.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
+    use tor_socksproto::{SocksAuth, SocksVersion};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn parses_socks5_domain_connect() {
+        let (mut client, mut server) = duplex(128);
+
+        let server_task = tokio::spawn(async move { read_socks_request(&mut server).await });
+
+        client.write_all(&[5, 1, 0]).await.unwrap();
+        let mut auth_reply = [0_u8; 2];
+        client.read_exact(&mut auth_reply).await.unwrap();
+        assert_eq!(auth_reply, [5, 0]);
+
+        client
+            .write_all(&[
+                5, 1, 0, 3, 11, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'c', b'o', b'm',
+                0, 80,
+            ])
+            .await
+            .unwrap();
+
+        let request = server_task.await.unwrap().unwrap();
+        assert_eq!(request.version(), SocksVersion::V5);
+        assert_eq!(request.command(), SocksCmd::CONNECT);
+        assert_eq!(request.addr().to_string(), "example.com");
+        assert_eq!(request.port(), 80);
+        assert_eq!(request.auth(), &SocksAuth::NoAuth);
+    }
+
+    #[tokio::test]
+    async fn parses_socks4a_connect() {
+        let (mut client, mut server) = duplex(128);
+
+        let server_task = tokio::spawn(async move { read_socks_request(&mut server).await });
+
+        client
+            .write_all(&[
+                4, 1, 1, 187, 0, 0, 0, 1, 0, b'e', b'x', b'a', b'm', b'p', b'l', b'e', b'.', b'o',
+                b'n', b'i', b'o', b'n', 0,
+            ])
+            .await
+            .unwrap();
+
+        let request = server_task.await.unwrap().unwrap();
+        assert_eq!(request.version(), SocksVersion::V4);
+        assert_eq!(request.command(), SocksCmd::CONNECT);
+        assert_eq!(request.addr().to_string(), "example.onion");
+        assert_eq!(request.port(), 443);
+    }
+
+    #[test]
+    fn converts_request_targets() {
+        let request = SocksRequest::new(
+            SocksVersion::V5,
+            SocksCmd::CONNECT,
+            SocksAddr::Ip(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))),
+            443,
+            SocksAuth::NoAuth,
+        )
+        .unwrap();
+
+        let target = Target::try_from(&request).unwrap();
+        assert_eq!(target.host, "93.184.216.34");
+        assert_eq!(target.port, 443);
+    }
+
+    #[tokio::test]
+    async fn writes_socks5_success_reply() {
+        let request = SocksRequest::new(
+            SocksVersion::V5,
+            SocksCmd::CONNECT,
+            "example.com"
+                .to_owned()
+                .try_into()
+                .map(SocksAddr::Hostname)
+                .unwrap(),
+            80,
+            SocksAuth::NoAuth,
+        )
+        .unwrap();
+
+        let (mut client, mut server) = duplex(16);
+        let server_task = tokio::spawn(async move {
+            write_socks_reply(&mut server, &request, SocksStatus::SUCCEEDED).await
+        });
+
+        let mut reply = [0_u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        server_task.await.unwrap().unwrap();
+
+        assert_eq!(reply, [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn classifies_routine_disconnects() {
+        let error = anyhow::Error::new(std::io::Error::from(ErrorKind::ConnectionReset));
+        assert!(is_routine_disconnect(&error));
+
+        let error = anyhow::Error::msg("not routine");
+        assert!(!is_routine_disconnect(&error));
+    }
 }

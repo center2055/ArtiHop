@@ -144,3 +144,31 @@ impl Default for AppConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_overrides_defaults() {
+        let cli = Cli {
+            config: None,
+            mode: Some(Mode::Short2),
+            socks: Some("127.0.0.1:19050".parse().unwrap()),
+            log: Some("artihop=debug".to_owned()),
+        };
+
+        let config = AppConfig::load(cli).unwrap();
+
+        assert_eq!(config.mode, Mode::Short2);
+        assert_eq!(config.socks.to_string(), "127.0.0.1:19050");
+        assert_eq!(config.log_filter, "artihop=debug");
+    }
+
+    #[test]
+    fn parses_mode_aliases() {
+        assert_eq!("normal".parse::<Mode>().unwrap(), Mode::Normal);
+        assert_eq!("short2".parse::<Mode>().unwrap(), Mode::Short2);
+        assert_eq!("short1".parse::<Mode>().unwrap(), Mode::Short1);
+    }
+}

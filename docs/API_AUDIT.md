@@ -57,13 +57,13 @@ Normal mode should stay isolated from experimental path work. The shortened mode
 
 ## 3. Compileable MVP
 
-The MVP in this repository starts a local SOCKS5 listener, accepts CONNECT requests, and routes them through `arti-client` with normal Arti circuit behavior.
+The normal-mode implementation in this repository starts a local SOCKS listener, accepts CONNECT requests, and routes them through `arti-client` with normal Arti circuit behavior.
 
 Modules:
 
 - `config.rs`: CLI and TOML configuration.
 - `tor_client.rs`: Arti bootstrap.
-- `proxy.rs`: SOCKS5 handshake and stream relay.
+- `proxy.rs`: SOCKS handshake via `tor-socksproto` and stream relay.
 - `pathing.rs`: shortened-circuit placeholders that fail closed.
 - `main.rs`: process wiring, logging, shutdown.
 
