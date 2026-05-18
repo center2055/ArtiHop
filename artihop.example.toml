@@ -1,0 +1,3 @@
+mode = "normal"
+socks = "127.0.0.1:9050"
+log_filter = "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info"

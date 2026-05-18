@@ -1,0 +1,18 @@
+[package]
+name = "artihop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Standalone local SOCKS proxy powered by Arti"
+repository = "https://github.com/center2055/ArtiHop"
+
+[dependencies]
+anyhow = "=1.0.102"
+arti-client = { version = "=0.42.0", default-features = false, features = ["tokio", "rustls", "compression", "static-sqlite"] }
+clap = { version = "=4.6.1", features = ["derive"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
+toml = "=1.1.2"
+tor-rtcompat = { version = "=0.42.0", default-features = false, features = ["tokio", "rustls"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
