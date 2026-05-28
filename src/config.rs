@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long, value_name = "ADDR")]
     pub socks: Option<SocketAddr>,
 
+    /// Optional local control listener. Send the line "NEWNYM" to rotate to fresh circuits.
+    #[arg(long, value_name = "ADDR")]
+    pub control: Option<SocketAddr>,
+
     #[arg(long, value_name = "FILTER")]
     pub log: Option<String>,
 }
@@ -78,6 +82,7 @@ impl<'de> Deserialize<'de> for Mode {
 pub struct AppConfig {
     pub mode: Mode,
     pub socks: SocketAddr,
+    pub control: Option<SocketAddr>,
     pub log_filter: String,
 }
 
@@ -85,6 +90,7 @@ pub struct AppConfig {
 struct FileConfig {
     mode: Option<Mode>,
     socks: Option<SocketAddr>,
+    control: Option<SocketAddr>,
     log_filter: Option<String>,
 }
 
@@ -102,6 +108,10 @@ impl AppConfig {
 
         if let Some(socks) = cli.socks {
             config.socks = socks;
+        }
+
+        if let Some(control) = cli.control {
+            config.control = Some(control);
         }
 
         if let Some(log_filter) = cli.log {
@@ -125,6 +135,10 @@ impl AppConfig {
             self.socks = socks;
         }
 
+        if let Some(control) = file_config.control {
+            self.control = Some(control);
+        }
+
         if let Some(log_filter) = file_config.log_filter {
             self.log_filter = log_filter;
         }
@@ -140,6 +154,7 @@ impl Default for AppConfig {
             socks: "127.0.0.1:9050"
                 .parse()
                 .expect("default SOCKS address must parse"),
+            control: None,
             log_filter: "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info".to_owned(),
         }
     }
@@ -155,6 +170,7 @@ mod tests {
             config: None,
             mode: Some(Mode::Short2),
             socks: Some("127.0.0.1:19050".parse().unwrap()),
+            control: None,
             log: Some("artihop=debug".to_owned()),
         };
 
