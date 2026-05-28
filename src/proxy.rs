@@ -81,10 +81,7 @@ async fn handle_client(mut inbound: TcpStream, tor_client: ArtiClient) -> Result
 
     debug!(%target, "opening Tor stream");
 
-    let mut tor_stream = match tor_client
-        .connect((target.host.as_str(), target.port))
-        .await
-    {
+    let mut tor_stream = match connect_with_retry(&tor_client, &target).await {
         Ok(stream) => stream,
         Err(error) => {
             write_socks_reply(&mut inbound, &request, SocksStatus::GENERAL_FAILURE).await?;
@@ -104,6 +101,50 @@ async fn handle_client(mut inbound: TcpStream, tor_client: ArtiClient) -> Result
     }
 
     Ok(())
+}
+
+/// Open a Tor stream to the target, retrying transient failures on a fresh circuit.
+///
+/// Shortened (experimental) circuits open streams less reliably than full 3-hop paths: a guard or
+/// exit can refuse a stream, leaving an otherwise-fine destination failing. Rather than surface that
+/// to the SOCKS client immediately, retry on freshly isolated circuits so a single bad circuit does
+/// not break browsing. The first attempt reuses existing circuits (fast path); retries force a new
+/// circuit via a fresh isolation token.
+async fn connect_with_retry(
+    tor_client: &ArtiClient,
+    target: &Target,
+) -> Result<arti_client::DataStream> {
+    const MAX_ATTEMPTS: usize = 3;
+    let addr = (target.host.as_str(), target.port);
+    let mut last_error: Option<arti_client::Error> = None;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        let result = if attempt == 1 {
+            tor_client.connect(addr).await
+        } else {
+            let mut prefs = arti_client::StreamPrefs::new();
+            prefs.set_isolation(arti_client::IsolationToken::new());
+            tor_client.connect_with_prefs(addr, &prefs).await
+        };
+
+        match result {
+            Ok(stream) => {
+                if attempt > 1 {
+                    debug!(%target, attempt, "Tor stream opened after retry");
+                }
+                return Ok(stream);
+            }
+            Err(error) => {
+                debug!(%target, attempt, error = ?error, "Tor stream attempt failed");
+                last_error = Some(error);
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.expect("at least one attempt must have run").into())
 }
 
 fn is_routine_disconnect(error: &anyhow::Error) -> bool {
