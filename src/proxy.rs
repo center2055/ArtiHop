@@ -11,7 +11,7 @@ use tor_socksproto::{
 };
 use tracing::{debug, info, warn};
 
-use crate::tor_client::ArtiClient;
+use crate::tor_client::{ArtiClient, SharedClient};
 
 #[derive(Debug, Clone)]
 struct Target {
@@ -45,7 +45,7 @@ impl TryFrom<&SocksRequest> for Target {
     }
 }
 
-pub async fn run_socks5(listen_addr: SocketAddr, tor_client: ArtiClient) -> Result<()> {
+pub async fn run_socks5(listen_addr: SocketAddr, tor_client: SharedClient) -> Result<()> {
     let listener = TcpListener::bind(listen_addr)
         .await
         .with_context(|| format!("failed to bind SOCKS listener on {listen_addr}"))?;
@@ -55,7 +55,8 @@ pub async fn run_socks5(listen_addr: SocketAddr, tor_client: ArtiClient) -> Resu
 
     loop {
         let (stream, peer_addr) = listener.accept().await?;
-        let tor_client = tor_client.clone();
+        // Snapshot the current client; NEWNYM may swap it for a freshly isolated one between conns.
+        let tor_client = tor_client.lock().expect("Tor client mutex poisoned").clone();
 
         tokio::spawn(async move {
             if let Err(error) = handle_client(stream, tor_client).await {

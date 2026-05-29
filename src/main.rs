@@ -1,7 +1,10 @@
 mod config;
+mod control;
 mod pathing;
 mod proxy;
 mod tor_client;
+
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use clap::Parser;
@@ -24,8 +27,11 @@ async fn main() -> Result<()> {
     let tor_client = tor_client::bootstrap().await?;
     info!("Tor client bootstrapped");
 
+    let shared: tor_client::SharedClient = Arc::new(Mutex::new(tor_client));
+
     tokio::select! {
-        result = proxy::run_socks5(config.socks, tor_client) => result,
+        result = proxy::run_socks5(config.socks, shared.clone()) => result,
+        result = control::run(config.control, shared.clone()) => result,
         result = tokio::signal::ctrl_c() => {
             result?;
             warn!("shutdown signal received");
