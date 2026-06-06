@@ -19,9 +19,14 @@ async fn main() -> Result<()> {
     init_tracing(&config.log_filter)?;
     pathing::configure(config.mode);
 
-    info!(mode = %config.mode, socks = %config.socks, "starting ArtiHop");
+    info!(
+        mode = %config.mode,
+        socks = %config.socks,
+        bridges = config.bridges_config.is_some(),
+        "starting ArtiHop"
+    );
 
-    let tor_client = tor_client::bootstrap().await?;
+    let tor_client = tor_client::bootstrap(config.bridges_config.as_deref()).await?;
     info!("Tor client bootstrapped");
 
     tokio::select! {

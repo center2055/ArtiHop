@@ -15,6 +15,11 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 
+    /// Path to an Arti-format TOML file with a [bridges] section (bridge lines + pluggable
+    /// transports). When set, ArtiHop connects through those bridges instead of directly.
+    #[arg(long, value_name = "FILE")]
+    pub bridges_config: Option<PathBuf>,
+
     #[arg(long, value_enum)]
     pub mode: Option<Mode>,
 
@@ -79,6 +84,8 @@ pub struct AppConfig {
     pub mode: Mode,
     pub socks: SocketAddr,
     pub log_filter: String,
+    /// Optional Arti-format TOML config file carrying the [bridges] section.
+    pub bridges_config: Option<PathBuf>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -106,6 +113,10 @@ impl AppConfig {
 
         if let Some(log_filter) = cli.log {
             config.log_filter = log_filter;
+        }
+
+        if let Some(bridges_config) = cli.bridges_config {
+            config.bridges_config = Some(bridges_config);
         }
 
         Ok(config)
@@ -141,6 +152,7 @@ impl Default for AppConfig {
                 .parse()
                 .expect("default SOCKS address must parse"),
             log_filter: "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info".to_owned(),
+            bridges_config: None,
         }
     }
 }
@@ -153,6 +165,7 @@ mod tests {
     fn cli_overrides_defaults() {
         let cli = Cli {
             config: None,
+            bridges_config: None,
             mode: Some(Mode::Short2),
             socks: Some("127.0.0.1:19050".parse().unwrap()),
             log: Some("artihop=debug".to_owned()),
