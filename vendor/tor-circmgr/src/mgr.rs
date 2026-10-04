@@ -27,6 +27,7 @@ use crate::{DirInfo, Error, PathConfig, Result, timeouts};
 
 use retry_error::RetryError;
 use tor_async_utils::mpsc_channel_no_memquota;
+use tor_basic_utils::onionperf_types::{OnionperfCircuitStatus, OnionperfEvent};
 use tor_basic_utils::retry::RetryDelay;
 use tor_config::MutCfg;
 use tor_error::{AbsRetryTime, HasRetryTime, debug_report, info_report, internal, warn_report};
@@ -970,7 +971,6 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
     /// under the assumption that it will be used for that spec.
     ///
     /// This is the primary entry point for AbstractTunnelMgr.
-    #[allow(clippy::cognitive_complexity)] // TODO #2010: Refactor?
     #[instrument(level = "trace", skip_all)]
     pub(crate) async fn get_or_launch(
         self: &Arc<Self>,
@@ -1032,7 +1032,16 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
                         .await;
 
                     match outcome {
-                        Ok(Ok(circ)) => return Ok(circ),
+                        Ok(Ok(circ)) => {
+                            // TODO: Give usage as Value, probably once tracing valuable feature is
+                            // stable.
+                            tracing::trace!(
+                                onionperf = true,
+                                usage = ?usage,
+                                event = ?OnionperfEvent::Circuit(OnionperfCircuitStatus::Built),
+                            );
+                            return Ok(circ);
+                        }
                         Ok(Err(e)) => {
                             debug!("Circuit attempt {} failed.", attempt_num);
                             Error::RequestFailed(e)
@@ -1204,7 +1213,7 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
 
     /// Execute an action returned by pick-action, and return the
     /// resulting tunnel or error.
-    #[allow(clippy::cognitive_complexity, clippy::type_complexity)] // TODO #2010: Refactor
+    #[allow(clippy::type_complexity)] // TODO #2010: Refactor
     #[instrument(level = "trace", skip_all)]
     async fn take_action(
         self: Arc<Self>,
@@ -1457,7 +1466,6 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
         usage: &TargetTunnelUsage,
         plan: TunnelBuildPlan<B, R>,
     ) -> Shared<oneshot::Receiver<PendResult<B, R>>> {
-        let _ = usage; // Currently unused.
         let TunnelBuildPlan {
             mut plan,
             sender,
@@ -1476,6 +1484,8 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
         // During tests, the `FakeBuilder` will need to release the block in order to fake a timeout
         // correctly.
         plan.add_blocked_advance_reason(reason);
+
+        let usage = usage.clone();
 
         runtime
             .spawn(async move {
@@ -1497,6 +1507,21 @@ impl<B: AbstractTunnelBuilder<R> + 'static, R: Runtime> AbstractTunnelMgr<B, R> 
                 // (We ignore any errors from `send`: That just means that nobody
                 // was waiting for this tunnel.)
                 let _ = sender.send(reply.clone());
+
+                // TODO: Give usage as Value, probably once tracing valuable feature is stable.
+                if reply.is_ok() {
+                    tracing::trace!(
+                        onionperf = true,
+                        usage = ?usage,
+                        event = ?OnionperfEvent::Circuit(OnionperfCircuitStatus::Launched),
+                    );
+                } else {
+                    tracing::trace!(
+                        onionperf = true,
+                        usage = ?usage,
+                        event = ?OnionperfEvent::Circuit(OnionperfCircuitStatus::Failed),
+                    );
+                }
 
                 if let Some(new_spec) = new_spec {
                     // Wait briefly before we notify opportunistically.  This
@@ -1863,6 +1888,7 @@ mod test {
     #![allow(clippy::unchecked_time_subtraction)]
     #![allow(clippy::useless_vec)]
     #![allow(clippy::needless_pass_by_value)]
+    #![allow(clippy::string_slice)] // See arti#2571
     //! <!-- @@ end test lint list maintained by maint/add_warning @@ -->
     use super::*;
     use crate::isolation::test::{IsolationTokenEq, assert_isoleq};

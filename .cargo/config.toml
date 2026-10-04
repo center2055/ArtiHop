@@ -1,0 +1,5 @@
+# Link the C runtime statically on Windows. Without this, artihop.exe needs vcruntime140.dll, which
+# is not part of Windows (it comes with the Visual C++ Redistributable), so on a clean install the
+# engine failed to start at all.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

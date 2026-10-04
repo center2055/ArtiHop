@@ -28,6 +28,11 @@ pub struct Cli {
 
     #[arg(long, value_name = "FILTER")]
     pub log: Option<String>,
+
+    /// Loopback address for a small control listener. It accepts one command per line: `NEWNYM`
+    /// (later streams use fresh circuits, like Tor's signal of that name) and `PING`.
+    #[arg(long, value_name = "ADDR")]
+    pub control: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -86,6 +91,8 @@ pub struct AppConfig {
     pub log_filter: String,
     /// Optional Arti-format TOML config file carrying the [bridges] section.
     pub bridges_config: Option<PathBuf>,
+    /// Optional loopback control listener (NEWNYM / PING).
+    pub control: Option<SocketAddr>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -93,6 +100,8 @@ struct FileConfig {
     mode: Option<Mode>,
     socks: Option<SocketAddr>,
     log_filter: Option<String>,
+    bridges_config: Option<PathBuf>,
+    control: Option<SocketAddr>,
 }
 
 impl AppConfig {
@@ -119,7 +128,24 @@ impl AppConfig {
             config.bridges_config = Some(bridges_config);
         }
 
+        if let Some(control) = cli.control {
+            config.control = Some(control);
+        }
+
+        config.validate()?;
         Ok(config)
+    }
+
+    /// Anything that can reach the control listener can rotate circuits, so it only ever listens
+    /// on this machine.
+    fn validate(&self) -> Result<()> {
+        if let Some(control) = self.control
+            && !control.ip().is_loopback()
+        {
+            bail!("the control listener must use a loopback address, not {control}");
+        }
+
+        Ok(())
     }
 
     fn apply_file(&mut self, path: &Path) -> Result<()> {
@@ -140,6 +166,14 @@ impl AppConfig {
             self.log_filter = log_filter;
         }
 
+        if let Some(bridges_config) = file_config.bridges_config {
+            self.bridges_config = Some(bridges_config);
+        }
+
+        if let Some(control) = file_config.control {
+            self.control = Some(control);
+        }
+
         Ok(())
     }
 }
@@ -153,6 +187,7 @@ impl Default for AppConfig {
                 .expect("default SOCKS address must parse"),
             log_filter: "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info".to_owned(),
             bridges_config: None,
+            control: None,
         }
     }
 }
@@ -169,6 +204,7 @@ mod tests {
             mode: Some(Mode::Short2),
             socks: Some("127.0.0.1:19050".parse().unwrap()),
             log: Some("artihop=debug".to_owned()),
+            control: Some("127.0.0.1:19051".parse().unwrap()),
         };
 
         let config = AppConfig::load(cli).unwrap();
@@ -176,6 +212,21 @@ mod tests {
         assert_eq!(config.mode, Mode::Short2);
         assert_eq!(config.socks.to_string(), "127.0.0.1:19050");
         assert_eq!(config.log_filter, "artihop=debug");
+        assert_eq!(config.control.unwrap().to_string(), "127.0.0.1:19051");
+    }
+
+    #[test]
+    fn control_listener_must_be_loopback() {
+        let cli = Cli {
+            config: None,
+            bridges_config: None,
+            mode: None,
+            socks: None,
+            log: None,
+            control: Some("0.0.0.0:19051".parse().unwrap()),
+        };
+
+        assert!(AppConfig::load(cli).is_err());
     }
 
     #[test]

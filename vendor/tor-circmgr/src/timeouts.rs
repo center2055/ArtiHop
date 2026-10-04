@@ -68,6 +68,17 @@ pub(crate) trait TimeoutEstimator {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     /// Build a circuit of a given length.
+    ///
+    /// Note that you should not generally have to use
+    /// this timeout outside of the circmgr code:
+    /// The circmgr already computes and applies
+    /// timeouts for creating and extending circuits.
+    ///
+    /// If you are using this timeout to estimate how long
+    /// it will take somebody _else_ to build a circuit,
+    /// remember that Tor clients will retry circuits when they fail,
+    /// and so it may take longer than this for your peer to
+    /// actually get a working circuit.
     BuildCircuit {
         /// The length of the circuit to construct.
         ///
@@ -89,6 +100,14 @@ pub enum Action {
         /// The length of the circuit.
         length: usize,
     },
+    /// Wait for a message to arrive to the other end of a circuit.
+    ///
+    /// (This is almost never the right operation to use unless you
+    /// are doing something tricky.)
+    OneWay {
+        /// The length of the circuit.
+        length: usize,
+    },
 }
 
 impl Action {
@@ -99,11 +118,22 @@ impl Action {
     /// for an action `a2` is `t * a2.timeout_scale() /
     /// a1.timeout_scale()`.
     ///
+    /// Callers should never rely on the actual values of this method:
+    /// only on their ratios.
+    ///
     /// This function can return garbage if the circuit length is larger
     /// than actually supported on the Tor network.
     fn timeout_scale(&self) -> usize {
+        // Internally, we define "1" as the amount of time it takes a
+        // message to transit from one hop to the next.
+        // So sending a message to the end of a 3-hop circuit is "3",
+        // and a round-trip with a 3-hop circuit is "6".
+
         /// An arbitrary value to use to prevent overflow.
         const MAX_LEN: usize = 64;
+
+        /// An arbitrary value to use to prevent overflow.
+        const MAX_ONEWAY_LEN: usize = MAX_LEN * 2;
 
         /// Return the scale value for building a `len`-hop circuit.
         fn build_scale(len: usize) -> usize {
@@ -128,7 +158,7 @@ impl Action {
                 //
                 // TODO: This is undocumented.
                 let length = length.clamp(3, MAX_LEN);
-                build_scale(length)
+                build_scale(length) * 2
             }
             Action::ExtendCircuit {
                 initial_length,
@@ -136,32 +166,37 @@ impl Action {
             } => {
                 let initial_length = initial_length.clamp(0, MAX_LEN);
                 let final_length = final_length.clamp(initial_length, MAX_LEN);
-                build_scale(final_length) - build_scale(initial_length)
+                (build_scale(final_length) - build_scale(initial_length)) * 2
             }
-            Action::RoundTrip { length } => length.clamp(0, MAX_LEN),
+            Action::RoundTrip { length } => length.clamp(0, MAX_LEN) * 2,
+            Action::OneWay { length } => length.clamp(0, MAX_ONEWAY_LEN),
         }
     }
 }
 
 /// A safe variant of [`Duration::mul_f64`] that never panics.
 ///
-/// For infinite or NaN or negative multipliers, the results might be
-/// nonsensical, but at least they won't be a panic.
+/// If the result would be outside the range of [`Duration`],
+/// instead saturate to `0` or [`Duration::MAX`] as appropriate.
+///
+/// If the result would be NaN, we return an arbitrary duration.
 fn mul_duration_f64_saturating(d: Duration, mul: f64) -> Duration {
+    use std::cmp::Ordering;
+
     let secs = d.as_secs_f64() * mul;
-    // At this point I'd like to use Duration::try_from_secs_f64, but
-    // that isn't stable yet. :p
-    if secs.is_finite() && secs >= 0.0 {
-        // We rely on the property that `f64 as uNN` is saturating.
-        let seconds = secs.trunc() as u64;
-        let nanos = if seconds == u64::MAX {
-            0 // prevent any possible overflow.
-        } else {
-            (secs.fract() * 1e9) as u32
-        };
-        Duration::new(seconds, nanos)
-    } else {
-        Duration::from_secs(1)
+    match Duration::try_from_secs_f64(secs) {
+        Ok(product) => product,
+        // TODO perhaps we should log a warning in this case.
+        // Alternatively, we could make our timeout estimators fallible.
+        Err(_) => match secs.partial_cmp(&0.0) {
+            Some(Ordering::Greater) => Duration::MAX,
+            Some(_) => Duration::new(0, 0),
+            // The result is NaN, which means that the input `mul` was NaN.
+            // We are allowed to return anything in this case, so we return
+            // the original duration, on the theory that it is roughly
+            // the right order of magnitude.
+            None => d,
+        },
     }
 }
 
@@ -179,16 +214,17 @@ mod test {
     #![allow(clippy::unchecked_time_subtraction)]
     #![allow(clippy::useless_vec)]
     #![allow(clippy::needless_pass_by_value)]
+    #![allow(clippy::string_slice)] // See arti#2571
     //! <!-- @@ end test lint list maintained by maint/add_warning @@ -->
     use super::*;
 
     #[test]
     fn action_scale_values() {
-        assert_eq!(Action::BuildCircuit { length: 1 }.timeout_scale(), 6);
-        assert_eq!(Action::BuildCircuit { length: 2 }.timeout_scale(), 6);
-        assert_eq!(Action::BuildCircuit { length: 3 }.timeout_scale(), 6);
-        assert_eq!(Action::BuildCircuit { length: 4 }.timeout_scale(), 10);
-        assert_eq!(Action::BuildCircuit { length: 5 }.timeout_scale(), 15);
+        assert_eq!(Action::BuildCircuit { length: 1 }.timeout_scale(), 6 * 2);
+        assert_eq!(Action::BuildCircuit { length: 2 }.timeout_scale(), 6 * 2);
+        assert_eq!(Action::BuildCircuit { length: 3 }.timeout_scale(), 6 * 2);
+        assert_eq!(Action::BuildCircuit { length: 4 }.timeout_scale(), 10 * 2);
+        assert_eq!(Action::BuildCircuit { length: 5 }.timeout_scale(), 15 * 2);
 
         assert_eq!(
             Action::ExtendCircuit {
@@ -196,7 +232,7 @@ mod test {
                 final_length: 4
             }
             .timeout_scale(),
-            4
+            4 * 2
         );
         assert_eq!(
             Action::ExtendCircuit {
@@ -207,7 +243,8 @@ mod test {
             0
         );
 
-        assert_eq!(Action::RoundTrip { length: 3 }.timeout_scale(), 3);
+        assert_eq!(Action::RoundTrip { length: 3 }.timeout_scale(), 3 * 2);
+        assert_eq!(Action::OneWay { length: 3 }.timeout_scale(), 3);
     }
 
     #[test]
@@ -233,14 +270,14 @@ mod test {
 
         // This would underflow.
         let v = mul_duration_f64_saturating(mega_year, -1.0);
-        assert_eq!(v, Duration::from_secs(1));
+        assert_eq!(v, Duration::from_secs(0));
 
         // These are just silly.
         let v = mul_duration_f64_saturating(mega_year, f64::INFINITY);
-        assert_eq!(v, Duration::from_secs(1));
+        assert_eq!(v, Duration::MAX);
         let v = mul_duration_f64_saturating(mega_year, f64::NEG_INFINITY);
-        assert_eq!(v, Duration::from_secs(1));
+        assert_eq!(v, Duration::from_secs(0));
         let v = mul_duration_f64_saturating(mega_year, f64::NAN);
-        assert_eq!(v, Duration::from_secs(1));
+        assert_eq!(v, mega_year);
     }
 }

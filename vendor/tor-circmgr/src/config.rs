@@ -230,6 +230,15 @@ pub struct CircuitTiming {
     #[deftly(tor_config(default = "default_hs_max_attempts()"))]
     #[getter(as_copy)]
     pub(crate) hs_intro_rend_attempts: u32,
+
+    /// The period for which a hidden service directory cannot be queried for
+    /// the same descriptor ID again.
+    //
+    // This parameter is honoured by tor-hsclient, not here.
+    #[cfg(feature = "hs-client")]
+    #[deftly(tor_config(default = "default_hs_dir_requery_interval()"))]
+    #[getter(as_copy)]
+    pub(crate) hs_dir_requery_interval: Duration,
 }
 
 /// Return default threshold
@@ -279,6 +288,13 @@ fn default_hs_max_attempts() -> u32 {
     // Probably, because the HS may be missing or down, and we don't want to spend ages
     // turning over every stone looking for it.
     6
+}
+
+/// Return the default HsDir requery period.
+///
+// Corresponds to C Tor's REND_HID_SERV_DIR_REQUERY_PERIOD
+fn default_hs_dir_requery_interval() -> Duration {
+    Duration::from_secs(15 * 60)
 }
 
 /// Return the default request loyalty timeout.
@@ -387,6 +403,7 @@ mod test {
     #![allow(clippy::unchecked_time_subtraction)]
     #![allow(clippy::useless_vec)]
     #![allow(clippy::needless_pass_by_value)]
+    #![allow(clippy::string_slice)] // See arti#2571
     //! <!-- @@ end test lint list maintained by maint/add_warning @@ -->
     use super::*;
 
