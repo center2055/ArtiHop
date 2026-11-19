@@ -1,5 +1,6 @@
 mod config;
 mod control;
+mod exit;
 mod pathing;
 mod proxy;
 mod tor_client;
@@ -7,6 +8,7 @@ mod tor_client;
 use anyhow::Result;
 use clap::Parser;
 use config::{AppConfig, Cli};
+use exit::ExitCountry;
 use tor_client::SharedClient;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -32,21 +34,23 @@ async fn main() -> Result<()> {
         socks = %config.socks,
         bridges = using_bridges,
         control = config.control.is_some(),
+        exit_country = %exit::describe(config.exit_country),
         "starting ArtiHop"
     );
 
     let client = SharedClient::new(tor_client::bootstrap(config.bridges_config.as_deref()).await?);
     info!("Tor client bootstrapped");
 
+    let exit_country = ExitCountry::new(config.exit_country);
     let control = async {
         match config.control {
-            Some(addr) => control::run_control(addr, client.clone()).await,
+            Some(addr) => control::run_control(addr, client.clone(), exit_country.clone()).await,
             None => std::future::pending().await,
         }
     };
 
     tokio::select! {
-        result = proxy::run_socks5(config.socks, client.clone()) => result,
+        result = proxy::run_socks5(config.socks, client.clone(), exit_country.clone()) => result,
         result = control => result,
         result = shutdown_signal() => {
             result?;

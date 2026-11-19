@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.92"
 name = "tor-circmgr"
-version = "0.47.0"
+version = "0.48.0"
 authors = [
     "The Tor Project, Inc.",
     "Nick Mathewson <nickm@torproject.org>",
@@ -119,13 +119,13 @@ features = ["derive"]
 default-features = false
 
 [dependencies.async-trait]
-version = "0.1.54"
+version = "0.1.92"
 
 [dependencies.cfg-if]
-version = "1.0.0"
+version = "1.0.5"
 
 [dependencies.derive-deftly]
-version = "~1.12.0"
+version = "~1.14.0"
 features = [
     "full",
     "beta",
@@ -136,20 +136,20 @@ version = "0.11.2"
 package = "derive_builder_fork_arti"
 
 [dependencies.derive_more]
-version = "2.0.1"
+version = "2.1.1"
 features = ["full"]
 
 [dependencies.downcast-rs]
-version = "2.0.1"
+version = "2.0.2"
 
 [dependencies.dyn-clone]
-version = "1.0.4"
+version = "1.0.20"
 
 [dependencies.educe]
-version = "0.4.22"
+version = "0.4.23"
 
 [dependencies.futures]
-version = "0.3.14"
+version = "0.3.34"
 
 [dependencies.humantime-serde]
 version = "1.1.1"
@@ -167,86 +167,86 @@ version = "0.8.0"
 version = "1"
 
 [dependencies.rand]
-version = "0.10.1"
+version = "0.10.3"
 
 [dependencies.retry-error]
 version = "0.14.0"
 
 [dependencies.safelog]
-version = "0.10.0"
+version = "0.10.1"
 
 [dependencies.serde]
-version = "1.0.103"
+version = "1.0.229"
 features = ["derive"]
 
 [dependencies.thiserror]
 version = "2"
 
 [dependencies.tor-async-utils]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-basic-utils]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-cell]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-chanmgr]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-config]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-dircommon]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-error]
-version = "0.47.0"
+version = "0.48.0"
 features = ["tracing"]
 
 [dependencies.tor-geoip]
-version = "0.47.0"
+version = "0.48.0"
 optional = true
 
 [dependencies.tor-guardmgr]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-linkspec]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-memquota]
-version = "0.47.0"
+version = "0.48.0"
 default-features = false
 
 [dependencies.tor-netdir]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-netdoc]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-persist]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-proto]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-protover]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-relay-selection]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-rtcompat]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tor-units]
-version = "0.47.0"
+version = "0.48.0"
 
 [dependencies.tracing]
-version = "0.1.36"
+version = "0.1.44"
 
 [dependencies.visibility]
-version = "0.1.0"
+version = "0.1.1"
 optional = true
 
 [dependencies.void]
@@ -265,29 +265,29 @@ version = "0.3.0"
 version = "0.4"
 
 [dev-dependencies.tor-guardmgr]
-version = "0.47.0"
+version = "0.48.0"
 features = [
     "testing",
     "vanguards",
 ]
 
 [dev-dependencies.tor-llcrypto]
-version = "0.47.0"
+version = "0.48.0"
 
 [dev-dependencies.tor-netdir]
-version = "0.47.0"
+version = "0.48.0"
 features = ["testing"]
 
 [dev-dependencies.tor-persist]
-version = "0.47.0"
+version = "0.48.0"
 features = ["testing"]
 
 [dev-dependencies.tor-rtcompat]
-version = "0.47.0"
+version = "0.48.0"
 features = [
     "tokio",
     "native-tls",
 ]
 
 [dev-dependencies.tor-rtmock]
-version = "0.47.0"
+version = "0.48.0"

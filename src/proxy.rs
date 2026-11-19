@@ -8,7 +8,9 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use arti_client::{DataStream, ErrorKind as TorErrorKind, HasKind, IsolationToken, StreamPrefs};
+use arti_client::{
+    CountryCode, DataStream, ErrorKind as TorErrorKind, HasKind, IsolationToken, StreamPrefs,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -19,6 +21,7 @@ use tor_socksproto::{
 };
 use tracing::{debug, info, warn};
 
+use crate::exit::ExitCountry;
 use crate::tor_client::{ArtiClient, SharedClient};
 
 /// A client that connects and never finishes the SOCKS handshake is dropped after this long, instead
@@ -85,7 +88,11 @@ impl IsolationMap {
     }
 }
 
-pub async fn run_socks5(listen_addr: SocketAddr, client: SharedClient) -> Result<()> {
+pub async fn run_socks5(
+    listen_addr: SocketAddr,
+    client: SharedClient,
+    exit_country: ExitCountry,
+) -> Result<()> {
     let listener = TcpListener::bind(listen_addr)
         .await
         .with_context(|| format!("failed to bind SOCKS listener on {listen_addr}"))?;
@@ -101,9 +108,12 @@ pub async fn run_socks5(listen_addr: SocketAddr, client: SharedClient) -> Result
         let _ = stream.set_nodelay(true);
         let tor_client = client.current();
         let isolation = isolation.clone();
+        let exit_country = exit_country.get();
 
         tokio::spawn(async move {
-            if let Err(error) = handle_client(stream, peer_addr, tor_client, isolation).await {
+            if let Err(error) =
+                handle_client(stream, peer_addr, tor_client, isolation, exit_country).await
+            {
                 // `{:#}` keeps the whole cause chain on one line, so a launcher that shows our
                 // output line by line gets one entry per failure.
                 let message = format!("{error:#}");
@@ -122,6 +132,7 @@ async fn handle_client(
     peer_addr: SocketAddr,
     tor_client: ArtiClient,
     isolation: IsolationMap,
+    exit_country: Option<CountryCode>,
 ) -> Result<()> {
     let request = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_socks_request(&mut inbound))
         .await
@@ -129,6 +140,10 @@ async fn handle_client(
 
     let mut prefs = StreamPrefs::new();
     prefs.set_isolation(isolation.token_for(peer_addr.ip(), request.auth()));
+    // Retries keep the country too: they clone these preferences and only swap the isolation.
+    if let Some(country) = exit_country {
+        prefs.exit_country(country);
+    }
 
     let command = request.command();
     if command == SocksCmd::CONNECT {

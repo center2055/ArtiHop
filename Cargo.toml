@@ -1,32 +1,28 @@
 [package]
 name = "artihop"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Standalone local SOCKS proxy powered by Arti"
 repository = "https://github.com/center2055/ArtiHop"
 
 [dependencies]
-anyhow = "=1.0.102"
-futures = { version = "=0.3.32", default-features = false, features = ["std"] }
-arti-client = { version = "=0.47.0", default-features = false, features = ["tokio", "rustls", "compression", "static-sqlite", "bridge-client", "pt-client", "onion-service-client"] }
-clap = { version = "=4.6.1", features = ["derive"] }
-rustls = { version = "=0.23.40", default-features = false, features = ["ring", "std", "tls12"] }
-serde = { version = "=1.0.228", features = ["derive"] }
-tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
-toml = "=1.1.2"
-tor-socksproto = "=0.47.0"
-tor-circmgr = { version = "=0.47.0", default-features = false }
-tor-rtcompat = { version = "=0.47.0", default-features = false, features = ["tokio", "rustls"] }
+anyhow = "=1.0.104"
+futures = { version = "=0.3.34", default-features = false, features = ["std"] }
+arti-client = { version = "=0.48.0", default-features = false, features = ["tokio", "rustls", "compression", "static-sqlite", "bridge-client", "pt-client", "onion-service-client", "geoip"] }
+clap = { version = "=4.6.8", features = ["derive"] }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+tokio = { version = "=1.54.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
+toml = "=1.2.1"
+tor-socksproto = "=0.48.0"
+tor-circmgr = { version = "=0.48.0", default-features = false }
+tor-rtcompat = { version = "=0.48.0", default-features = false, features = ["tokio", "rustls"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 
 [patch.crates-io]
 tor-circmgr = { path = "vendor/tor-circmgr" }
-# saturating-time 0.5.0 never finishes finding the earliest/latest SystemTime on Windows, which
-# Arti 0.47 hits while parsing every consensus, so bootstrap hangs at 100% CPU. Drop this once a
-# fixed release is out (see vendor/saturating-time/src/internal.rs, find_limit).
-saturating-time = { path = "vendor/saturating-time" }
 
 # A proxy spends its life copying bytes and doing crypto: optimise across crates, keep one codegen
 # unit for better inlining, and drop debug symbols from the shipped binary.

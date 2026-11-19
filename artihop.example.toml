@@ -2,8 +2,11 @@ mode = "normal"
 socks = "127.0.0.1:9050"
 log_filter = "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info"
 
-# Loopback control listener for NEWNYM / PING.
+# Loopback control listener for NEWNYM / EXITCOUNTRY / PING.
 # control = "127.0.0.1:9051"
 
 # Arti-format TOML file with a [bridges] section.
 # bridges_config = "bridges.toml"
+
+# Two-letter country that streams should leave through, e.g. "de". Default: any.
+# exit_country = "de"

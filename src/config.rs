@@ -6,8 +6,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use arti_client::CountryCode;
 use clap::{Parser, ValueEnum};
 use serde::Deserialize;
+
+use crate::exit::parse_exit_country;
 
 #[derive(Debug, Parser)]
 #[command(name = "artihop", version, about = "Local SOCKS proxy powered by Arti")]
@@ -33,6 +36,12 @@ pub struct Cli {
     /// (later streams use fresh circuits, like Tor's signal of that name) and `PING`.
     #[arg(long, value_name = "ADDR")]
     pub control: Option<SocketAddr>,
+
+    /// Two-letter country that streams should appear to come from, e.g. `de`; `auto` for any.
+    /// Only exit relays in that country are used. The control command `EXITCOUNTRY` changes it
+    /// while ArtiHop runs.
+    #[arg(long, value_name = "CC")]
+    pub exit_country: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -91,8 +100,10 @@ pub struct AppConfig {
     pub log_filter: String,
     /// Optional Arti-format TOML config file carrying the [bridges] section.
     pub bridges_config: Option<PathBuf>,
-    /// Optional loopback control listener (NEWNYM / PING).
+    /// Optional loopback control listener (NEWNYM / EXITCOUNTRY / PING).
     pub control: Option<SocketAddr>,
+    /// The country streams should appear to come from; `None` for any.
+    pub exit_country: Option<CountryCode>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -102,6 +113,7 @@ struct FileConfig {
     log_filter: Option<String>,
     bridges_config: Option<PathBuf>,
     control: Option<SocketAddr>,
+    exit_country: Option<String>,
 }
 
 impl AppConfig {
@@ -130,6 +142,10 @@ impl AppConfig {
 
         if let Some(control) = cli.control {
             config.control = Some(control);
+        }
+
+        if let Some(exit_country) = cli.exit_country.as_deref() {
+            config.exit_country = parse_exit_country(exit_country)?;
         }
 
         config.validate()?;
@@ -174,6 +190,11 @@ impl AppConfig {
             self.control = Some(control);
         }
 
+        if let Some(exit_country) = file_config.exit_country.as_deref() {
+            self.exit_country = parse_exit_country(exit_country)
+                .with_context(|| format!("exit_country in config file {}", path.display()))?;
+        }
+
         Ok(())
     }
 }
@@ -188,6 +209,7 @@ impl Default for AppConfig {
             log_filter: "artihop=info,arti_client=info,tor_proto=warn,tor_circmgr=info".to_owned(),
             bridges_config: None,
             control: None,
+            exit_country: None,
         }
     }
 }
@@ -205,6 +227,7 @@ mod tests {
             socks: Some("127.0.0.1:19050".parse().unwrap()),
             log: Some("artihop=debug".to_owned()),
             control: Some("127.0.0.1:19051".parse().unwrap()),
+            exit_country: Some("de".to_owned()),
         };
 
         let config = AppConfig::load(cli).unwrap();
@@ -213,6 +236,22 @@ mod tests {
         assert_eq!(config.socks.to_string(), "127.0.0.1:19050");
         assert_eq!(config.log_filter, "artihop=debug");
         assert_eq!(config.control.unwrap().to_string(), "127.0.0.1:19051");
+        assert_eq!(config.exit_country.unwrap().to_string(), "DE");
+    }
+
+    #[test]
+    fn exit_country_must_be_a_country_code() {
+        let cli = Cli {
+            config: None,
+            bridges_config: None,
+            mode: None,
+            socks: None,
+            log: None,
+            control: None,
+            exit_country: Some("germany".to_owned()),
+        };
+
+        assert!(AppConfig::load(cli).is_err());
     }
 
     #[test]
@@ -224,6 +263,7 @@ mod tests {
             socks: None,
             log: None,
             control: Some("0.0.0.0:19051".parse().unwrap()),
+            exit_country: None,
         };
 
         assert!(AppConfig::load(cli).is_err());
